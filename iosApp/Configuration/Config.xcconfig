@@ -1,0 +1,7 @@
+TEAM_ID=
+
+PRODUCT_NAME=Tesis_calibracion_camera
+PRODUCT_BUNDLE_IDENTIFIER=edu.pucmm.tesis_calibracion_camera.Tesis_calibracion_camera$(TEAM_ID)
+
+CURRENT_PROJECT_VERSION=1
+MARKETING_VERSION=1.0
