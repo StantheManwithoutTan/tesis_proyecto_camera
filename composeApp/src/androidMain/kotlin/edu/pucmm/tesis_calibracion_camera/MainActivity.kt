@@ -13,10 +13,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import edu.pucmm.tesis_calibracion_camera.viewmodel.CameraSensorViewModel
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var cameraController: LifecycleCameraController
+    private lateinit var sensorViewModel: CameraSensorViewModel
 
     // A state to hold the permission granting status
     private val hasCameraPermission = mutableStateOf(false)
@@ -42,8 +44,11 @@ class MainActivity : ComponentActivity() {
         // Initialize the controller here
         cameraController = LifecycleCameraController(baseContext).apply {
             bindToLifecycle(this@MainActivity)
-            cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+            cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
         }
+
+        // Initialize sensor view model
+        sensorViewModel = CameraSensorViewModel(baseContext)
 
         // Check for permissions
         requestPermissions()
@@ -51,14 +56,25 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Only show the camera preview if permissions are granted
             if (hasCameraPermission.value) {
-                CameraPreview(
+                CameraPreviewWithGuide(
                     controller = cameraController,
+                    viewModel = sensorViewModel,
                     modifier = Modifier.fillMaxSize()
                 )
             }
             // You could add an else block here to show a message
             // to the user if permissions are not granted.
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        sensorViewModel.startMonitoring()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorViewModel.stopMonitoring()
     }
 
     private fun requestPermissions() {
@@ -75,6 +91,9 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+        private val REQUIRED_PERMISSIONS = arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_FINE_LOCATION  // Para brújula más precisa
+        )
     }
 }
