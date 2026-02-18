@@ -21,6 +21,13 @@ fun AlignmentGuide(
     Box(
         modifier = modifier.fillMaxSize()
     ) {
+        SensorValuesPanel(
+            sensorReadings = sensorReadings,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp)
+        )
+
         // Contenedor principal con overlay
         Column(
             modifier = Modifier
@@ -57,20 +64,57 @@ fun AlignmentGuide(
 }
 
 @Composable
+fun SensorValuesPanel(
+    sensorReadings: SensorReadings,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.6f), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .padding(10.dp)
+    ) {
+        Column {
+            Text(
+                text = "Pitch: %.1f°".format(sensorReadings.pitchAngle),
+                color = Color.White,
+                fontSize = 12.sp
+            )
+            Text(
+                text = "Roll: %.1f°".format(sensorReadings.rollAngle),
+                color = Color.White,
+                fontSize = 12.sp
+            )
+            Text(
+                text = "Yaw: %.1f°".format(sensorReadings.yawAngle),
+                color = Color.White,
+                fontSize = 12.sp
+            )
+            val distanceText = if (sensorReadings.distanceInCm > 0) {
+                "Dist: ${sensorReadings.distanceInCm} cm"
+            } else {
+                "Dist: N/A"
+            }
+            Text(
+                text = distanceText,
+                color = Color.White,
+                fontSize = 12.sp
+            )
+        }
+    }
+}
+
+@Composable
 fun AlignmentStatus(
     sensorReadings: SensorReadings,
     modifier: Modifier = Modifier
 ) {
     val statusText = when {
         sensorReadings.isAligned -> "✓ ALINEADA"
-        abs(sensorReadings.pitchAngle) > 10f -> "↕ INCLINACIÓN VERTICAL"
-        abs(sensorReadings.rollAngle) > 10f -> "↔ INCLINACIÓN HORIZONTAL"
         else -> "⚠ ALINEANDO..."
     }
     
     val backgroundColor = when {
         sensorReadings.isAligned -> Color.Green.copy(alpha = 0.7f)
-        abs(sensorReadings.pitchAngle) < 5f && abs(sensorReadings.rollAngle) < 5f -> Color(0xFFFFA500).copy(alpha = 0.7f)
         else -> Color.Red.copy(alpha = 0.7f)
     }
     

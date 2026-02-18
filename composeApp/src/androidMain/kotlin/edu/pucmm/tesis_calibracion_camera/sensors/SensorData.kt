@@ -4,7 +4,7 @@ data class SensorReadings(
     val pitchAngle: Float = 0f,      // Ángulo vertical (inclinación arriba/abajo)
     val rollAngle: Float = 0f,       // Ángulo horizontal (inclinación izquierda/derecha)
     val yawAngle: Float = 0f,        // Rotación (brújula)
-    val isAligned: Boolean = false,  // true cuando está alineada (ángulos cercanos a 0)
+    val isAligned: Boolean = false,  // true cuando está alineada (cerca de un punto objetivo)
     val distanceInCm: Int = -1       // Distancia en cm (-1 si no disponible)
 )
 

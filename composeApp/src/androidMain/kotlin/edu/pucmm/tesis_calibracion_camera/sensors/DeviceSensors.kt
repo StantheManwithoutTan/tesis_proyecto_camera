@@ -88,9 +88,11 @@ class DeviceSensors(context: Context) : SensorEventListener {
             val rollAngle = Math.toDegrees(orientation[2].toDouble()).toFloat()
             val yawAngle = Math.toDegrees(orientation[0].toDouble()).toFloat()
             
-            // Determinar si está alineada (ángulos cercanos a 0)
-            // Tolerancia de ±5 grados
-            val isAligned = Math.abs(pitchAngle) < 5f && Math.abs(rollAngle) < 5f
+            // Determinar si está alineada verificando contra los puntos de alineación
+            // Tolerancias: Pitch ±10, Roll ±2 grados (Yaw no se verifica)
+            val isAligned = AlignmentPoints.points.any { point ->
+                point.isMatching(pitchAngle, rollAngle, yawAngle)
+            }
             
             // Calcular distancia en cm
             val distanceInCm = if (distanceValue > 0) distanceValue.toInt() else -1
