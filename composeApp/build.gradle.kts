@@ -38,6 +38,7 @@ kotlin {
             implementation("androidx.camera:camera-video:$cameraxVersion")
             // ViewModel para sensores
             implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1")
+            implementation("com.squareup.okhttp3:okhttp:4.12.0")
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -88,6 +89,7 @@ android {
 dependencies {
     debugImplementation(libs.compose.uiTooling)
 }
+
 
 
 

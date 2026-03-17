@@ -2,6 +2,7 @@ package edu.pucmm.tesis_calibracion_camera.utils
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -13,6 +14,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+data class CapturedPhoto(
+    val uri: Uri,
+    val localPath: String?
+)
+
 class CameraCapture(private val context: Context) {
     
     companion object {
@@ -22,7 +28,7 @@ class CameraCapture(private val context: Context) {
     
     fun takePicture(
         controller: LifecycleCameraController,
-        onSuccess: (String) -> Unit,
+        onSuccess: (CapturedPhoto) -> Unit,
         onError: (String) -> Unit
     ) {
         try {
@@ -57,12 +63,22 @@ class CameraCapture(private val context: Context) {
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                         val savedUri = outputFileResults.savedUri
-                        val message = when {
-                            savedUri != null -> "Foto guardada: $savedUri"
-                            fallbackFile != null -> "Foto guardada: ${fallbackFile.absolutePath}"
-                            else -> "Foto guardada"
+                        val finalUri = when {
+                            savedUri != null -> savedUri
+                            fallbackFile != null -> Uri.fromFile(fallbackFile)
+                            else -> null
                         }
-                        onSuccess(message)
+                        if (finalUri == null) {
+                            onError("No se pudo obtener la ubicación de la imagen capturada")
+                            return
+                        }
+
+                        onSuccess(
+                            CapturedPhoto(
+                                uri = finalUri,
+                                localPath = fallbackFile?.absolutePath
+                            )
+                        )
                     }
 
                     override fun onError(exception: ImageCaptureException) {

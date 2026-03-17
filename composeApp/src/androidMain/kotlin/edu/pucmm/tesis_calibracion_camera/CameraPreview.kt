@@ -1,5 +1,7 @@
 package edu.pucmm.tesis_calibracion_camera
 
+import android.net.Uri
+import android.widget.Toast
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
@@ -15,8 +17,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.sp
-import android.widget.Toast
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import edu.pucmm.tesis_calibracion_camera.utils.CameraCapture
 import edu.pucmm.tesis_calibracion_camera.viewmodel.CameraSensorViewModel
@@ -52,6 +57,8 @@ fun CameraPreviewWithGuide(
     viewModel: CameraSensorViewModel,
     cameraCapture: CameraCapture,
     onCaptureTrigger: ((callback: () -> Unit) -> Unit),
+    onPhotoCaptured: (Uri) -> Unit,
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var lastCaptureTime by remember { mutableStateOf(0L) }
@@ -65,12 +72,13 @@ fun CameraPreviewWithGuide(
                 if (viewModel.sensorReadings.value.isAligned) {
                     cameraCapture.takePicture(
                         controller = controller,
-                        onSuccess = { message ->
+                        onSuccess = { capturedPhoto ->
                             Toast.makeText(
                                 context,
-                                message,
+                                "Foto guardada: ${capturedPhoto.uri}",
                                 Toast.LENGTH_SHORT
                             ).show()
+                            onPhotoCaptured(capturedPhoto.uri)
                         },
                         onError = { error ->
                             Toast.makeText(
@@ -106,6 +114,25 @@ fun CameraPreviewWithGuide(
             sensorReadings = viewModel.sensorReadings.value,
             modifier = Modifier.fillMaxSize()
         )
+
+        // Botón volver arriba a la izquierda
+        FilledTonalButton(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 16.dp, start = 12.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = Color.Black.copy(alpha = 0.55f),
+                contentColor = Color.White
+            )
+        ) {
+            Text(
+                text = "\u2190 Volver",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
         
         // Botón de captura en la parte inferior
         if (viewModel.sensorReadings.value.isAligned) {
