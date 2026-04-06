@@ -24,7 +24,7 @@ fun AlignmentGuide(
         SensorValuesPanel(
             sensorReadings = sensorReadings,
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopEnd)
                 .padding(12.dp)
         )
 

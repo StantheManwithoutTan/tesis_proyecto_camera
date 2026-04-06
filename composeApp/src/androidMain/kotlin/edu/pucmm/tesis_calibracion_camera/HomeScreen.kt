@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,7 +40,8 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun HomeScreen(
-    onEnterCamera: () -> Unit
+    onEnterCamera: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val breathingAnimation = rememberInfiniteTransition(label = "breathing-animation")
     val glowAlpha by breathingAnimation.animateFloat(
@@ -74,6 +76,19 @@ fun HomeScreen(
                 .clip(CircleShape)
                 .background(Color.White.copy(alpha = glowAlpha))
         )
+
+        TextButton(
+            onClick = onOpenSettings,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 16.dp, end = 16.dp)
+        ) {
+            Text(
+                text = "Ajustes",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
 
         // Círculo decorativo inferior izquierdo
         Box(
