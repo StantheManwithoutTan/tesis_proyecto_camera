@@ -51,6 +51,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -75,7 +76,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var cameraController: LifecycleCameraController
     private lateinit var sensorViewModel: CameraSensorViewModel
     private lateinit var cameraCapture: CameraCapture
-    private val httpClient = OkHttpClient()
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(1, TimeUnit.MINUTES)
+        .readTimeout(1, TimeUnit.MINUTES)
+        .writeTimeout(1, TimeUnit.MINUTES)
+        .build()
 
     // Callback para capturar foto desde el botón de volumen
     private var onVolumeDownPressed: (() -> Unit)? = null
