@@ -51,6 +51,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 data class CameraCalibrationInput(
     val distanceCameraToPlaneMm: Double,
@@ -58,15 +60,14 @@ data class CameraCalibrationInput(
     val sensorWidthMm: Double
 )
 
-data class DetectAlignmentResult(
-    val pair: String,
-    val distanceMm: Double
-)
-
-data class DetectPulseEstimate(
-    val pair: String,
-    val pulses: Int,
-    val direction: String
+data class DetectChannelResult(
+    val channel: String,
+    val detected: Boolean,
+    val pixelCount: Int,
+    val markX: Int?,
+    val markY: Int?,
+    val score: Double?,
+    val scale: Double?
 )
 
 class MainActivity : ComponentActivity() {
@@ -93,8 +94,10 @@ class MainActivity : ComponentActivity() {
     // Aquí queda listo el payload para enviarlo luego a tu API
     private val calibrationInput = mutableStateOf<CameraCalibrationInput?>(null)
     private val isUploading = mutableStateOf(false)
-    private val apiResponseImageBytes = mutableStateOf<ByteArray?>(null)
-    private val detectAlignmentResults = mutableStateOf<List<DetectAlignmentResult>>(emptyList())
+    private val apiResponseImageMascarasBytes = mutableStateOf<ByteArray?>(null)
+    private val apiResponseImageResultadoBytes = mutableStateOf<ByteArray?>(null)
+    private val apiResponseImageCalculosMmBytes = mutableStateOf<ByteArray?>(null)
+    private val detectChannelResults = mutableStateOf<List<DetectChannelResult>>(emptyList())
     private val isDetectResultsSectionOpen = mutableStateOf(false)
     private val apiErrorMessage = mutableStateOf<String?>(null)
     private val appSettings: SharedPreferences by lazy {
@@ -133,8 +136,10 @@ class MainActivity : ComponentActivity() {
             when {
                 isDetectResultsSectionOpen.value -> {
                     DetectResultsScreen(
-                        imageBytes = apiResponseImageBytes.value,
-                        results = detectAlignmentResults.value,
+                        mascarasImageBytes = apiResponseImageMascarasBytes.value,
+                        resultadoImageBytes = apiResponseImageResultadoBytes.value,
+                        calculosMmImageBytes = apiResponseImageCalculosMmBytes.value,
+                        channelResults = detectChannelResults.value,
                         onBack = {
                             isDetectResultsSectionOpen.value = false
                         },
@@ -252,21 +257,9 @@ class MainActivity : ComponentActivity() {
                 else -> {
                     HomeScreen(
                         onEnterCamera = {
-                            val savedInput = buildCalibrationInputFromCurrentValues()
-                            if (savedInput != null) {
-                                calibrationInput.value = savedInput
-                                isCameraSectionOpen.value = true
-                                if (!hasCameraPermission.value) {
-                                    requestPermissionsIfNeeded()
-                                }
-                            } else {
-                                shouldOpenCameraAfterSettings.value = true
-                                isFormSectionOpen.value = true
-                                Toast.makeText(
-                                    baseContext,
-                                    "Primero debes completar los ajustes de calibración.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                            isCameraSectionOpen.value = true
+                            if (!hasCameraPermission.value) {
+                                requestPermissionsIfNeeded()
                             }
                         },
                         onOpenSettings = {
@@ -353,6 +346,167 @@ class MainActivity : ComponentActivity() {
             .apply()
     }
 
+    private fun buildAnalyzeData(responseJson: String): AnalyzeResponseData? {
+        return try {
+            val root = JSONObject(responseJson)
+            val outputFiles = root.optJSONObject("output_files") ?: return null
+
+            val mascaras = outputFiles.optString(OUTPUT_FILE_KEY_MASCARAS).takeIf { it.isNotBlank() }
+            val resultado = outputFiles.optString(OUTPUT_FILE_KEY_RESULTADO).takeIf { it.isNotBlank() }
+            val calculosMm = outputFiles.optString(OUTPUT_FILE_KEY_CALCULOS_MM).takeIf { it.isNotBlank() }
+
+            if (mascaras == null || resultado == null || calculosMm == null) {
+                return null
+            }
+
+            val channelResults = CHANNEL_KEYS.mapNotNull { key ->
+                val channelObject = root.optJSONObject(key) ?: return@mapNotNull null
+                val markObject = channelObject.optJSONObject("mark")
+                DetectChannelResult(
+                    channel = key,
+                    detected = channelObject.optBoolean("detected", false),
+                    pixelCount = channelObject.optInt("pixel_count", 0),
+                    markX = markObject?.optInt("x"),
+                    markY = markObject?.optInt("y"),
+                    score = if (markObject != null && !markObject.isNull("score")) {
+                        markObject.optDouble("score")
+                    } else {
+                        null
+                    },
+                    scale = if (markObject != null && !markObject.isNull("scale")) {
+                        markObject.optDouble("scale")
+                    } else {
+                        null
+                    }
+                )
+            }
+
+            AnalyzeResponseData(
+                outputFiles = mapOf(
+                    OUTPUT_FILE_KEY_MASCARAS to extractOutputFileName(mascaras),
+                    OUTPUT_FILE_KEY_RESULTADO to extractOutputFileName(resultado),
+                    OUTPUT_FILE_KEY_CALCULOS_MM to extractOutputFileName(calculosMm)
+                ),
+                channelResults = channelResults
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchOutputImages(
+        mascarasFileName: String?,
+        resultadoFileName: String?,
+        calculosMmFileName: String?
+    ) {
+        if (mascarasFileName == null || resultadoFileName == null || calculosMmFileName == null) {
+            runOnUiThread {
+                isUploading.value = false
+                apiErrorMessage.value = "No se pudieron resolver los nombres de output_files"
+            }
+            return
+        }
+
+        val pending = AtomicInteger(3)
+        val failed = AtomicBoolean(false)
+
+        var mascarasBytes: ByteArray? = null
+        var resultadoBytes: ByteArray? = null
+        var calculosMmBytes: ByteArray? = null
+
+        fun onImageLoaded() {
+            if (pending.decrementAndGet() == 0 && !failed.get()) {
+                runOnUiThread {
+                    apiResponseImageMascarasBytes.value = mascarasBytes
+                    apiResponseImageResultadoBytes.value = resultadoBytes
+                    apiResponseImageCalculosMmBytes.value = calculosMmBytes
+                    isUploading.value = false
+                    isDetectResultsSectionOpen.value = true
+                }
+            }
+        }
+
+        fun onImageError(message: String) {
+            if (failed.compareAndSet(false, true)) {
+                runOnUiThread {
+                    isUploading.value = false
+                    apiErrorMessage.value = message
+                }
+            }
+        }
+
+        requestOutputImage(mascarasFileName, OUTPUT_FILE_KEY_MASCARAS, onError = ::onImageError) {
+            mascarasBytes = it
+            onImageLoaded()
+        }
+        requestOutputImage(resultadoFileName, OUTPUT_FILE_KEY_RESULTADO, onError = ::onImageError) {
+            resultadoBytes = it
+            onImageLoaded()
+        }
+        requestOutputImage(calculosMmFileName, OUTPUT_FILE_KEY_CALCULOS_MM, onError = ::onImageError) {
+            calculosMmBytes = it
+            onImageLoaded()
+        }
+    }
+
+    private fun requestOutputImage(
+        fileName: String,
+        imageLabel: String,
+        onError: (String) -> Unit,
+        onSuccess: (ByteArray) -> Unit
+    ) {
+        val request = Request.Builder()
+            .url(API_OUTPUT_BASE_URL + Uri.encode(fileName))
+            .get()
+            .build()
+
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                onError("No se pudo descargar '$imageLabel': ${e.message}")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val bodyBytes = response.body?.bytes()
+                if (!response.isSuccessful || bodyBytes == null || bodyBytes.isEmpty()) {
+                    val errorBody = bodyBytes?.toString(Charsets.UTF_8).orEmpty()
+                    onError("Error HTTP ${response.code} descargando '$imageLabel': $errorBody")
+                    return
+                }
+
+                onSuccess(bodyBytes)
+            }
+        })
+    }
+
+    private fun extractOutputFileName(rawPath: String): String {
+        return rawPath
+            .replace("\\", "/")
+            .substringAfterLast("/")
+    }
+
+    private data class AnalyzeResponseData(
+        val outputFiles: Map<String, String>,
+        val channelResults: List<DetectChannelResult>
+    )
+
+    private fun clearPreviousResults() {
+        apiResponseImageMascarasBytes.value = null
+        apiResponseImageResultadoBytes.value = null
+        apiResponseImageCalculosMmBytes.value = null
+        detectChannelResults.value = emptyList()
+    }
+
+    private fun prepareForAnalyzeRequest() {
+        clearPreviousResults()
+        apiErrorMessage.value = null
+        isUploading.value = true
+    }
+
+    private fun resetAnalyzeStateOnError(message: String) {
+        isUploading.value = false
+        apiErrorMessage.value = message
+    }
+
     private fun sendCalibrationPhotoToApi(photoUri: Uri) {
         val imageBytes = contentResolver.openInputStream(photoUri)?.use { it.readBytes() }
         if (imageBytes == null) {
@@ -360,8 +514,7 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        isUploading.value = true
-        apiErrorMessage.value = null
+        prepareForAnalyzeRequest()
 
         val mimeType = contentResolver.getType(photoUri) ?: "image/jpeg"
         val fileName = resolveFileName(contentResolver, photoUri)
@@ -369,138 +522,52 @@ class MainActivity : ComponentActivity() {
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(
-                "image",
+                "file",
                 fileName,
                 imageBytes.toRequestBody(mimeType.toMediaTypeOrNull())
             )
             .build()
 
         val request = Request.Builder()
-            .url(API_UPLOAD_URL)
+            .url(API_ANALYZE_URL)
             .post(requestBody)
             .build()
 
         httpClient.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
-                    isUploading.value = false
-                    apiErrorMessage.value = "No se pudo conectar con la API local: ${e.message}"
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                val responseBody = response.body
-                val responseContentType = responseBody?.contentType()?.toString().orEmpty()
-                val responseBodyBytes = responseBody?.bytes()
-                runOnUiThread {
-                    isUploading.value = false
-                    if (!response.isSuccessful) {
-                        val errorBody = responseBodyBytes?.toString(Charsets.UTF_8).orEmpty()
-                        apiErrorMessage.value = "Error HTTP ${response.code}: $errorBody"
-                        return@runOnUiThread
-                    }
-
-                    if (responseBodyBytes == null || responseBodyBytes.isEmpty()) {
-                        apiErrorMessage.value = "La API no devolvio contenido de imagen"
-                        return@runOnUiThread
-                    }
-
-                    if (!responseContentType.startsWith("image/")) {
-                        val bodyAsText = responseBodyBytes.toString(Charsets.UTF_8)
-                        apiErrorMessage.value =
-                            "Se esperaba una imagen y la API devolvio '$responseContentType': $bodyAsText"
-                        return@runOnUiThread
-                    }
-
-                    sendDetectRequest(photoUri)
-
-                    apiResponseImageBytes.value = responseBodyBytes
-                }
-            }
-        })
-    }
-
-    private fun sendDetectRequest(photoUri: Uri) {
-        val imageBytes = contentResolver.openInputStream(photoUri)?.use { it.readBytes() }
-        if (imageBytes == null) {
-            apiErrorMessage.value = "No se pudo leer la imagen para el analisis de alignment"
-            return
-        }
-
-        val mimeType = contentResolver.getType(photoUri) ?: "image/jpeg"
-        val fileName = resolveFileName(contentResolver, photoUri)
-
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "image",
-                fileName,
-                imageBytes.toRequestBody(mimeType.toMediaTypeOrNull())
-            )
-            .build()
-
-        val request = Request.Builder()
-            .url(API_DETECT_URL)
-            .post(requestBody)
-            .build()
-
-        httpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread {
-                    apiErrorMessage.value = "No se pudo consultar /detect: ${e.message}"
+                    resetAnalyzeStateOnError("No se pudo conectar con la API local: ${e.message}")
                 }
             }
 
             override fun onResponse(call: Call, response: Response) {
                 val responseText = response.body?.string().orEmpty()
-                runOnUiThread {
-                    if (!response.isSuccessful) {
-                        apiErrorMessage.value = "Error HTTP ${response.code} en /detect: $responseText"
-                        return@runOnUiThread
+                if (!response.isSuccessful) {
+                    runOnUiThread {
+                        resetAnalyzeStateOnError("Error HTTP ${response.code} en /analyze: $responseText")
                     }
-
-                    val summary = buildDetectSummary(responseText)
-                    if (summary == null) {
-                        apiErrorMessage.value = "La respuesta de /detect no tiene el formato esperado"
-                        return@runOnUiThread
-                    }
-
-                    detectAlignmentResults.value = summary
-                    isDetectResultsSectionOpen.value = true
+                    return
                 }
-            }
-        })
-    }
 
-    private fun buildDetectSummary(responseJson: String): List<DetectAlignmentResult>? {
-        return try {
-            val root = JSONObject(responseJson)
-            val alignment = root.optJSONObject("alignment") ?: return null
+                val analyzeData = buildAnalyzeData(responseText)
+                if (analyzeData == null) {
+                    runOnUiThread {
+                        resetAnalyzeStateOnError("La respuesta de /analyze no tiene el formato esperado")
+                    }
+                    return
+                }
 
-            val entries = mutableListOf<DetectAlignmentResult>()
-            val keys = alignment.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val entry = alignment.optJSONObject(key) ?: continue
-                if (!entry.has("dist_mm") || entry.isNull("dist_mm")) continue
-                entries.add(
-                    DetectAlignmentResult(
-                        pair = key,
-                        distanceMm = entry.getDouble("dist_mm")
-                    )
+                runOnUiThread {
+                    detectChannelResults.value = analyzeData.channelResults
+                }
+
+                fetchOutputImages(
+                    mascarasFileName = analyzeData.outputFiles[OUTPUT_FILE_KEY_MASCARAS],
+                    resultadoFileName = analyzeData.outputFiles[OUTPUT_FILE_KEY_RESULTADO],
+                    calculosMmFileName = analyzeData.outputFiles[OUTPUT_FILE_KEY_CALCULOS_MM]
                 )
             }
-
-            if (entries.isEmpty()) return null
-
-            entries.sortedBy { it.pair }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun formatDistance(value: Double): String {
-        return "%.4f".format(value)
+        })
     }
 
     private fun resolveFileName(contentResolver: ContentResolver, uri: Uri): String {
@@ -517,8 +584,12 @@ class MainActivity : ComponentActivity() {
     companion object {
         // En emulador Android, 10.0.2.2 apunta a localhost de tu PC.
         // marca de que punta al api
-        private const val API_UPLOAD_URL = "http://192.168.1.7:8000/detect/image/"
-        private const val API_DETECT_URL = "http://192.168.1.7:8000/detect"
+        private const val API_ANALYZE_URL = "https://fastapi-dxui.onrender.com/api/v1/detection/analyze"
+        private const val API_OUTPUT_BASE_URL = "https://fastapi-dxui.onrender.com/api/v1/detection/output/"
+        private const val OUTPUT_FILE_KEY_MASCARAS = "mascaras"
+        private const val OUTPUT_FILE_KEY_RESULTADO = "resultado"
+        private const val OUTPUT_FILE_KEY_CALCULOS_MM = "calculos_mm"
+        private val CHANNEL_KEYS = listOf("C", "M", "Y", "K")
         private const val PREFERENCES_NAME = "camera_calibration_settings"
         private const val KEY_DISTANCE_MM = "distance_mm"
         private const val KEY_FOCAL_LENGTH_MM = "focal_length_mm"
@@ -543,16 +614,21 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun DetectResultsScreen(
-    imageBytes: ByteArray?,
-    results: List<DetectAlignmentResult>,
+    mascarasImageBytes: ByteArray?,
+    resultadoImageBytes: ByteArray?,
+    calculosMmImageBytes: ByteArray?,
+    channelResults: List<DetectChannelResult>,
     onBack: () -> Unit,
     onGoToCamera: () -> Unit
 ) {
-    val bitmap = remember(imageBytes) {
-        imageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+    val mascarasBitmap = remember(mascarasImageBytes) {
+        mascarasImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
     }
-    val pulseEstimates = remember(results) {
-        estimatePulses(results)
+    val resultadoBitmap = remember(resultadoImageBytes) {
+        resultadoImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+    }
+    val calculosMmBitmap = remember(calculosMmImageBytes) {
+        calculosMmImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
     }
 
     Column(
@@ -562,35 +638,61 @@ private fun DetectResultsScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Top
     ) {
-        Text("Resultados de /detect/")
+        Text("Resultados de analisis")
         Spacer(modifier = Modifier.height(12.dp))
 
-        if (bitmap != null) {
+        if (mascarasBitmap != null) {
+            Text("mascaras")
+            Spacer(modifier = Modifier.height(8.dp))
             Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Imagen procesada por la API",
+                bitmap = mascarasBitmap.asImageBitmap(),
+                contentDescription = "Imagen mascaras",
                 modifier = Modifier
                     .fillMaxWidth()
                     .sizeIn(maxHeight = 320.dp)
             )
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        Text("Distancia entre colores basada en dist_mm:")
-        Spacer(modifier = Modifier.height(12.dp))
-
-        results.forEach { result ->
-            Text("${result.pair}: ${"%.4f".format(result.distanceMm)} mm")
+        if (resultadoBitmap != null) {
+            Text("resultado")
             Spacer(modifier = Modifier.height(8.dp))
+            Image(
+                bitmap = resultadoBitmap.asImageBitmap(),
+                contentDescription = "Imagen resultado",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .sizeIn(maxHeight = 320.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Pulsaciones estimadas para llevar C-K, M-K y Y-K a cero (0.002 mm por pulsación):")
-        Spacer(modifier = Modifier.height(12.dp))
-
-        pulseEstimates.forEach { estimate ->
-            Text("${estimate.pair}: ${estimate.pulses} pulsaciones (${estimate.direction})")
+        if (calculosMmBitmap != null) {
+            Text("calculos_mm")
             Spacer(modifier = Modifier.height(8.dp))
+            Image(
+                bitmap = calculosMmBitmap.asImageBitmap(),
+                contentDescription = "Imagen calculos_mm",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .sizeIn(maxHeight = 320.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (channelResults.isNotEmpty()) {
+            Text("Canales detectados:")
+            Spacer(modifier = Modifier.height(8.dp))
+
+            channelResults.sortedBy { it.channel }.forEach { result ->
+                val markText = if (result.markX != null && result.markY != null) {
+                    "x=${result.markX}, y=${result.markY}, score=${result.score?.let { "%.4f".format(it) } ?: "n/a"}, scale=${result.scale?.let { "%.2f".format(it) } ?: "n/a"}"
+                } else {
+                    "sin marca"
+                }
+                Text("${result.channel}: detectado=${if (result.detected) "si" else "no"}, pixel_count=${result.pixelCount}, $markText")
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -611,22 +713,6 @@ private fun DetectResultsScreen(
             Text("Cerrar resultados")
         }
     }
-}
-
-private fun estimatePulses(results: List<DetectAlignmentResult>): List<DetectPulseEstimate> {
-    val targetPairs = setOf("C-K", "M-K", "Y-K")
-    return results
-        .filter { it.pair in targetPairs }
-        .sortedBy { it.pair }
-        .map { result ->
-            val pulses = kotlin.math.ceil(kotlin.math.abs(result.distanceMm) / 0.002).toInt()
-            val direction = if (result.distanceMm >= 0.0) "reducir" else "aumentar"
-            DetectPulseEstimate(
-                pair = result.pair,
-                pulses = pulses,
-                direction = direction
-            )
-        }
 }
 
 @Composable
